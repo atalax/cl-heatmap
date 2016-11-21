@@ -238,6 +238,8 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		case 'm':
 			if (!strcmp(arg, "heat")) {
 				arguments->colormap = colormap_heat;
+			} else if (!strcmp(arg, "grayscale")) {
+				arguments->colormap = colormap_grayscale;
 			} else {
 				argp_error(state, "Unknown colormap specified!");
 			}
