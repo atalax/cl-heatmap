@@ -2,6 +2,7 @@
 #include <argp.h>
 #include <limits.h>
 #include <math.h>
+#include <libgen.h>
 #include <proj_api.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -260,7 +261,7 @@ int main(int argc, char *argv[])
 {
 	struct arguments args = {
 		.zoomlevel = 12,
-		.kernel = "kernels/tdoa.cl",
+		.kernel = NULL,
 		.jspath = "./input.json",
 		.outdir = "./cache",
 		.clargs = "",
@@ -270,6 +271,11 @@ int main(int argc, char *argv[])
 	};
 
 	argp_parse(&argp, argc, argv, 0, 0, &args);
+
+	if (args.kernel == NULL) {
+		fprintf(stderr, "No kernel specified. Select on from the kernels/ directory!\n");
+		return EXIT_FAILURE;
+	}
 
 	init_projs();
 
@@ -373,11 +379,14 @@ int main(int argc, char *argv[])
 	size_t len = fread(clsrc, 1, MAX_SOURCE_SIZE, fsrc);
 	clsrc[len] = '\0';
 
+	char kpath[PATH_MAX];
+	strncpy(kpath, args.kernel, sizeof(kpath));
+	char *kdir = dirname(kpath);
 	char compargs[1000];
 	bzero(compargs, sizeof(compargs));
 	snprintf(compargs, ARRAY_SIZE(compargs),
-			"-Ikernels -DCOLORS_LEN=%d -DTILE_SIZE=%d -DCHUNK_SIZE=%d -DSTATION_CNT=%lu %s",
-			COLORMAP_LEN, TILE_SIZE, CHUNK_SIZE, datalen, args.clargs);
+			"-I%s -DCOLORS_LEN=%d -DTILE_SIZE=%d -DCHUNK_SIZE=%d -DSTATION_CNT=%lu %s",
+			kdir, COLORMAP_LEN, TILE_SIZE, CHUNK_SIZE, datalen, args.clargs);
 
 	cl_program clprg = clCreateProgramWithSource(clctx, 1, (const char **)&clsrc, &len, &ret);
 	OCCHECK(ret);
