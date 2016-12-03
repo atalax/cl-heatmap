@@ -163,6 +163,8 @@ void generate_translation_tile(int xtile, int ytile, int zoom, float4_t *out)
 struct arguments {
 	int zoomlevel;
 	unsigned int chunksize;
+	unsigned int platformid;
+	unsigned int deviceid;
 	char *kernel;
 	char *jspath;
 	char *outdir;
@@ -185,6 +187,7 @@ static struct argp_option argp_opts[] = {
 	{ "-m",		'm',	"COLORMAP",		0,	"Colormap to use, available: [\"heat\"]", 0 },
 	{ "-b",		'b',	"BOUNDARIES",	0,	"Boundaries in WGS84 '50.12,14.23,51.23,15.33'", 0 },
 	{ "-l",		'l',	"CHUNK_SIZE",	0,	"Process tiles in CHUNK_SIZE x CHUNK_SIZE chunks", 0 },
+	{ "-d",		'd',	"DEVICE",		0,	"OpenCL device to use (-d 0.0)", 0 },
 	{ NULL,		0,		NULL,			0,	NULL, 0 }
 };
 
@@ -225,6 +228,21 @@ static long safe_parse_long(struct argp_state *state, char *name, char *arg)
 	return ret;
 }
 
+static void parse_device(char *arg, struct argp_state *state)
+{
+	struct arguments *arguments = state->input;
+	unsigned int *ids[] = { &arguments->platformid, &arguments->deviceid };
+	char *save;
+
+	for (size_t i = 0; i < ARRAY_SIZE(ids); i++, arg = NULL) {
+		char *tok = strtok_r(arg, ".", &save);
+		if (tok == NULL) {
+			argp_error(state, "Error while parsing device specification!");
+		}
+		*ids[i] = safe_parse_long(state, i == 0 ? "PLATFORMID" : "DEVICEID", tok);
+	}
+}
+
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
 	struct arguments *arguments = state->input;
@@ -259,6 +277,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		case 'l':
 			arguments->chunksize = safe_parse_long(state, "CHUNK_SIZE", arg);
 			break;
+		case 'd':
+			parse_device(arg, state);
+			break;
 		default:
 			return ARGP_ERR_UNKNOWN;
 	}
@@ -273,6 +294,8 @@ int main(int argc, char *argv[])
 	struct arguments args = {
 		.zoomlevel = 12,
 		.chunksize = 4,
+		.platformid = 0,
+		.deviceid = 0,
 		.kernel = NULL,
 		.jspath = "./input.json",
 		.outdir = "./cache",
@@ -365,19 +388,35 @@ int main(int argc, char *argv[])
 
 	printf("OCL time!\n");
 
-	/* TODO: Add proper platform/device selection */
+	printf("Attempting to use platform = %d and device = %d\n", args.platformid, args.deviceid);
+
+	// Initialize OpenCL
 	cl_platform_id pids[10];
 	cl_uint cnt;
 	clGetPlatformIDs(ARRAY_SIZE(pids), pids, &cnt);
-	if (cnt < 1) {
+	if (args.platformid > cnt - 1) {
+		fprintf(stderr, "Platform id = %d not found!\n", args.platformid);
 		exit(EXIT_FAILURE);
 	}
+	cl_platform_id platform = pids[args.platformid];
+	char platname[500];
+	clGetPlatformInfo(platform, CL_PLATFORM_NAME, sizeof(platname), platname, NULL);
+	char platver[500];
+	clGetPlatformInfo(platform, CL_PLATFORM_VERSION, sizeof(platver), platver, NULL);
+	printf("OpenCL Platform %s  %s\n", platname, platver);
+
 	cl_device_id dids[10];
-	clGetDeviceIDs(pids[0], CL_DEVICE_TYPE_ALL, ARRAY_SIZE(dids), dids, &cnt);
-	if (cnt < 1) {
+	clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, ARRAY_SIZE(dids), dids, &cnt);
+	if (args.deviceid > cnt - 1) {
+		fprintf(stderr, "Device id = %d not found!\n", args.deviceid);
 		exit(EXIT_FAILURE);
 	}
-	cl_device_id *devid = &dids[0];
+	cl_device_id *devid = &dids[args.deviceid];
+	char devname[500];
+	clGetDeviceInfo(*devid, CL_DEVICE_NAME, sizeof(devname), devname, NULL);
+	char devver[500];
+	clGetDeviceInfo(*devid, CL_DEVICE_VERSION, sizeof(devver), devver, NULL);
+	printf("OpenCL Device %s  %s\n", devname, devver);
 
 	cl_int ret;
 	cl_context clctx = clCreateContext(NULL, 1, devid, NULL, NULL, &ret);
