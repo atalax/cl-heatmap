@@ -18,11 +18,12 @@ int init_projs()
 	return 0;
 }
 
-point_t wgs84_to_meters(point_t wgs)
+cl_float2 wgs84_to_meters(cl_float2 wgs)
 {
-	point_t ret;
-	double ry = wgs.lat * DEG_TO_RAD;
-	double rx = wgs.lng * DEG_TO_RAD;
+	cl_float2 ret;
+	// The X and Ys are switched intentionally
+	double ry = wgs.x * DEG_TO_RAD;
+	double rx = wgs.y * DEG_TO_RAD;
 	int err = pj_transform(proj_wgs, proj_meters, 1, 1, &ry, &rx, NULL);
 	if (err) {
 		fprintf(stderr, "Coordinate conversion failed: %s\n", pj_strerrno(err));

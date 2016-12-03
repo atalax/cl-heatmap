@@ -22,7 +22,6 @@
 #include <gsl/gsl_multifit.h>
 #include <json-c/json.h>
 
-#include "types.h"
 #include "colormaps.h"
 #include "coords.h"
 #include "utils.h"
@@ -100,7 +99,7 @@ void print_gsl_matrix(gsl_matrix *mat)
 	printf("]\n");
 }
 
-void generate_translation_tile(int xtile, int ytile, int zoom, float4_t *out)
+void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out)
 {
 	int npoints = 9;
 	gsl_multifit_linear_workspace *gwsp = gsl_multifit_linear_alloc(npoints, 3);
@@ -115,10 +114,10 @@ void generate_translation_tile(int xtile, int ytile, int zoom, float4_t *out)
 	// Generate 3x3 training points
 	for (int x = 0; x < 3; x++) {
 		for (int y = 0; y < 3; y++) {
-			point_t tile = {.x = xtile + (double)x / 2,
+			cl_float2 tile = {.x = xtile + (double)x / 2,
 							.y = ytile + (double)y / 2};
-			point_t wgs = tile_to_wgs84(tile, zoom);
-			point_t mets = wgs84_to_meters(wgs);
+			cl_float2 wgs = tile_to_wgs84(tile, zoom);
+			cl_float2 mets = wgs84_to_meters(wgs);
 
 			int pt = x * 3 + y;
 			// Inputs
@@ -169,8 +168,8 @@ struct arguments {
 	char *jspath;
 	char *outdir;
 	char *clargs;
-	point_t northwest;
-	point_t southeast;
+	cl_float2 northwest;
+	cl_float2 southeast;
 	rgba_t *colormap;
 };
 
@@ -211,10 +210,10 @@ static void parse_opt_boundaries(char *arg, struct argp_state *state)
 		}
 	}
 
-	arguments->northwest.lat = flts[0];
-	arguments->northwest.lng = flts[1];
-	arguments->southeast.lat = flts[2];
-	arguments->southeast.lng = flts[3];
+	arguments->northwest.x = flts[0];
+	arguments->northwest.y = flts[1];
+	arguments->southeast.x = flts[2];
+	arguments->southeast.y = flts[3];
 }
 
 static long safe_parse_long(struct argp_state *state, char *name, char *arg)
@@ -300,8 +299,8 @@ int main(int argc, char *argv[])
 		.jspath = "./input.json",
 		.outdir = "./cache",
 		.clargs = "",
-		.northwest = { .lat = 50.17, .lng = 14.24 },
-		.southeast = { .lat = 49.95, .lng = 14.70 },
+		.northwest = { .x = 50.17, .y = 14.24 },
+		.southeast = { .x = 49.95, .y = 14.70 },
 		.colormap = colormap_heat,
 	};
 
@@ -327,7 +326,7 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 	size_t datalen = json_object_array_length(jpts);
-	point_t *datapts = calloc(datalen, sizeof(point_t));
+	cl_float2 *datapts = calloc(datalen, sizeof(cl_float2));
 	float *datavals = calloc(datalen, sizeof(float));
 	for (unsigned int i = 0; i < datalen; i++) {
 		json_object *jpt = json_object_array_get_idx(jpts, i);
@@ -337,8 +336,8 @@ int main(int argc, char *argv[])
 		json_object_object_get_ex(jpt, "val", &jval);
 		json_object *jlat = json_object_array_get_idx(jloc, 0);
 		json_object *jlng = json_object_array_get_idx(jloc, 1);
-		datapts[i].lat = json_object_get_double(jlat);
-		datapts[i].lng = json_object_get_double(jlng);
+		datapts[i].x = json_object_get_double(jlat);
+		datapts[i].y = json_object_get_double(jlng);
 		datavals[i] = json_object_get_double(jval);
 	}
 
@@ -347,9 +346,9 @@ int main(int argc, char *argv[])
 	}
 
 	// Render tiles
-	point_t tilelt = round_point(wgs84_to_tile(args.northwest, args.zoomlevel),
+	cl_float2 tilelt = round_point(wgs84_to_tile(args.northwest, args.zoomlevel),
 								args.chunksize, false);
-	point_t tilerb = round_point(wgs84_to_tile(args.southeast, args.zoomlevel),
+	cl_float2 tilerb = round_point(wgs84_to_tile(args.southeast, args.zoomlevel),
 								args.chunksize, true);
 	printf("Rendering tiles from %dx%d to %dx%d on zoomlevel %d\n",
 			(int)tilelt.x, (int)tilelt.y,
@@ -373,7 +372,7 @@ int main(int argc, char *argv[])
 			if (!access(tpath, F_OK)) {
 				continue;
 			}
-			float4_t out[2];
+			cl_float4 out[2];
 			generate_translation_tile(x, y, args.zoomlevel, out);
 			FILE *fout = fopen(tpath, "w");
 			if (fout == NULL) {
@@ -457,11 +456,11 @@ int main(int argc, char *argv[])
 	// Load the data
 	size_t chunklen = TILE_SIZE * TILE_SIZE * args.chunksize * args.chunksize;
 	size_t ptinlen = 2 * args.chunksize * args.chunksize;
-	float4_t *ptin = calloc(ptinlen, sizeof(float4_t));
+	cl_float4 *ptin = calloc(ptinlen, sizeof(cl_float4));
 	uint8_t *out = calloc(chunklen, sizeof(rgba_t));
 
 	cl_mem stats_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-									 datalen * sizeof(point_t),
+									 datalen * sizeof(cl_float2),
 									 datapts, &ret);
 	OCCHECK(ret);
 	cl_mem tdoas_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
