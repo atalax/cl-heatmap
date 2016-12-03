@@ -1,15 +1,6 @@
 
 #include "common.h"
 
-
-/*
- * Defines:
- * COLORS_LEN - 
- * TILE_SIZE - 
- * CHUNK_SIZE -
- * STATION_CNT -
- * */
-
 __kernel void generate_tile(global float4 *ptin,
 							global float2 *stats,
 							global float *tdoas,
@@ -39,7 +30,7 @@ __kernel void generate_tile(global float4 *ptin,
 				err += ad;
 			}
 			err = sqrt(err);
-			err /= 5000;
+			err /= SCALE_BY;
 			int cid = COLORS_LEN - clamp((int)(err * COLORS_LEN), 0, COLORS_LEN - 1) - 1;
 			out[y * TILE_SIZE + x] = cid;
 		}

@@ -1,15 +1,6 @@
 
 #include "common.h"
 
-
-/*
- * Defines:
- * COLORS_LEN - 
- * TILE_SIZE - 
- * CHUNK_SIZE -
- * STATION_CNT -
- * */
-
 // See QGIS/src/plugins/heatmap/heatmap.cpp
 float quartic_kernel(float dist, float bw)
 {
@@ -50,13 +41,13 @@ __kernel void generate_tile(global float4 *ptin,
 			//		at.x, at.y, pt.x, pt.y);
 			float val = 0.0;
 			float sw = 0.0;
-			float best = 100000;
+			float best = FLT_MAX;
 			for (uint i = 0; i < STATION_CNT; i++) {
 				//if (!in_bounding_box(pts[i], bbox)) {
 				//	continue;
 				//}
 				float dist = distance(pt, pts[i]);
-				float w = quartic_kernel(dist, 100.0);
+				float w = quartic_kernel(dist, RANGE);
 				if (dist < best) {
 					best = dist;
 				}
@@ -68,10 +59,10 @@ __kernel void generate_tile(global float4 *ptin,
 			int cid = 0;
 			if (sw == 0.0)
 				sw = 1.0;
-			if (best < 100.0) {
+			if (best < RANGE) {
 				val /= sw;
 				//printf("%f\n", val);
-				float rval = (val - 60.0) / 100.0;
+				float rval = (val - MIN) / MAX;
 				cid = clamp((int)(rval * COLORS_LEN), 1, COLORS_LEN - 1);
 			}
 			out[y * TILE_SIZE + x] = cid;
