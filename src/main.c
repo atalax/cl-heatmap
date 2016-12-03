@@ -30,7 +30,6 @@
 #define MAX_SOURCE_SIZE 100000
 #define OCCHECK(x) if ((x) != CL_SUCCESS) { fprintf(stderr, "OCL Error! %d @%d\n", x, __LINE__); exit(EXIT_FAILURE); }
 #define TILE_SIZE 256
-#define CHUNK_SIZE 4
 
 void write_png(char *fname, int width, int height, uint8_t *img, rgba_t *colormap)
 {
@@ -163,6 +162,7 @@ void generate_translation_tile(int xtile, int ytile, int zoom, float4_t *out)
 
 struct arguments {
 	int zoomlevel;
+	unsigned int chunksize;
 	char *kernel;
 	char *jspath;
 	char *outdir;
@@ -184,6 +184,7 @@ static struct argp_option argp_opts[] = {
 	{ "-c",		'c',	"CLARGS",		0,	"OpenCL compiler arguments", 0 },
 	{ "-m",		'm',	"COLORMAP",		0,	"Colormap to use, available: [\"heat\"]", 0 },
 	{ "-b",		'b',	"BOUNDARIES",	0,	"Boundaries in WGS84 '50.12,14.23,51.23,15.33'", 0 },
+	{ "-l",		'l',	"CHUNK_SIZE",	0,	"Process tiles in CHUNK_SIZE x CHUNK_SIZE chunks", 0 },
 	{ NULL,		0,		NULL,			0,	NULL, 0 }
 };
 
@@ -213,16 +214,23 @@ static void parse_opt_boundaries(char *arg, struct argp_state *state)
 	arguments->southeast.lng = flts[3];
 }
 
+static long safe_parse_long(struct argp_state *state, char *name, char *arg)
+{
+	char *end = NULL;
+	long ret = strtol(arg, &end, 10);
+	if (*end != '\0') {
+		argp_error(state, "%s has to be an integer!", name);
+		return 0; // We shouldn't get here
+	}
+	return ret;
+}
+
 static error_t parse_opt(int key, char *arg, struct argp_state *state)
 {
 	struct arguments *arguments = state->input;
-	char *end = NULL;
 	switch (key) {
 		case 'z':
-			arguments->zoomlevel = strtol(arg, &end, 10);
-			if (*end != '\0') {
-				argp_error(state, "ZOOM has to be an integer!");
-			}
+			arguments->zoomlevel = safe_parse_long(state, "ZOOM", arg);
 			break;
 		case 'k':
 			arguments->kernel = arg;
@@ -248,6 +256,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		case 'b':
 			parse_opt_boundaries(arg, state);
 			break;
+		case 'l':
+			arguments->chunksize = safe_parse_long(state, "CHUNK_SIZE", arg);
+			break;
 		default:
 			return ARGP_ERR_UNKNOWN;
 	}
@@ -261,6 +272,7 @@ int main(int argc, char *argv[])
 {
 	struct arguments args = {
 		.zoomlevel = 12,
+		.chunksize = 4,
 		.kernel = NULL,
 		.jspath = "./input.json",
 		.outdir = "./cache",
@@ -313,9 +325,9 @@ int main(int argc, char *argv[])
 
 	// Render tiles
 	point_t tilelt = round_point(wgs84_to_tile(args.northwest, args.zoomlevel),
-								CHUNK_SIZE, false);
+								args.chunksize, false);
 	point_t tilerb = round_point(wgs84_to_tile(args.southeast, args.zoomlevel),
-								CHUNK_SIZE, true);
+								args.chunksize, true);
 	printf("Rendering tiles from %dx%d to %dx%d on zoomlevel %d\n",
 			(int)tilelt.x, (int)tilelt.y,
 			(int)tilerb.x, (int)tilerb.y,
@@ -386,7 +398,7 @@ int main(int argc, char *argv[])
 	bzero(compargs, sizeof(compargs));
 	snprintf(compargs, ARRAY_SIZE(compargs),
 			"-I%s -DCOLORS_LEN=%d -DTILE_SIZE=%d -DCHUNK_SIZE=%d -DSTATION_CNT=%lu %s",
-			kdir, COLORMAP_LEN, TILE_SIZE, CHUNK_SIZE, datalen, args.clargs);
+			kdir, COLORMAP_LEN, TILE_SIZE, args.chunksize, datalen, args.clargs);
 
 	cl_program clprg = clCreateProgramWithSource(clctx, 1, (const char **)&clsrc, &len, &ret);
 	OCCHECK(ret);
@@ -404,8 +416,8 @@ int main(int argc, char *argv[])
 	OCCHECK(ret);
 
 	// Load the data
-	size_t chunklen = TILE_SIZE * TILE_SIZE * CHUNK_SIZE * CHUNK_SIZE;
-	size_t ptinlen = 2 * CHUNK_SIZE * CHUNK_SIZE;
+	size_t chunklen = TILE_SIZE * TILE_SIZE * args.chunksize * args.chunksize;
+	size_t ptinlen = 2 * args.chunksize * args.chunksize;
 	float4_t *ptin = calloc(ptinlen, sizeof(float4_t));
 	uint8_t *out = calloc(chunklen, sizeof(rgba_t));
 
@@ -426,17 +438,17 @@ int main(int argc, char *argv[])
 	OCCHECK(ret);
 
 	// Generate the tiles
-	for (unsigned int cx = tilelt.x; cx < tilerb.x; cx += CHUNK_SIZE) {
-		for (unsigned int cy = tilelt.y; cy < tilerb.y; cy += CHUNK_SIZE) {
-			printf("Generating chunk %dx%d +%d\n", cx, cy, CHUNK_SIZE);
+	for (unsigned int cx = tilelt.x; cx < tilerb.x; cx += args.chunksize) {
+		for (unsigned int cy = tilelt.y; cy < tilerb.y; cy += args.chunksize) {
+			printf("Generating chunk %dx%d +%d\n", cx, cy, args.chunksize);
 			// Load the coordinate mappings
-			for (unsigned int x = 0; x < CHUNK_SIZE; x++) {
-				for (unsigned int y = 0; y < CHUNK_SIZE; y++) {
+			for (unsigned int x = 0; x < args.chunksize; x++) {
+				for (unsigned int y = 0; y < args.chunksize; y++) {
 					char cpath[PATH_MAX];
 					snprintf(cpath, sizeof(cpath),
 							"%s/%d/%d/%d.map", args.outdir, args.zoomlevel, x + cx, y + cy);
 					FILE *file = fopen(cpath, "r");
-					fread(&ptin[2 * (y * CHUNK_SIZE + x)],
+					fread(&ptin[2 * (y * args.chunksize + x)],
 							sizeof(ptin[0]), 2, file);
 					fclose(file);
 				}
@@ -447,7 +459,7 @@ int main(int argc, char *argv[])
 			ret = clSetKernelArg(clkrn, 1, sizeof(stats_cl), &stats_cl);
 			ret = clSetKernelArg(clkrn, 2, sizeof(tdoas_cl), &tdoas_cl);
 			ret = clSetKernelArg(clkrn, 3, sizeof(out_cl), &out_cl);
-			size_t global_work_size[] = { CHUNK_SIZE, CHUNK_SIZE };
+			size_t global_work_size[] = { args.chunksize, args.chunksize };
 			size_t local_work_size[] = { 1, 1 };
 			ret = clEnqueueNDRangeKernel(clque, clkrn, 2, NULL,
 										 global_work_size, local_work_size,
@@ -459,13 +471,13 @@ int main(int argc, char *argv[])
 								out, 0, NULL, NULL);
 			// Write the files
 			// TODO: Move this into a separate thread
-			for (unsigned int x = cx; x < cx + CHUNK_SIZE; x++) {
-				for (unsigned int y = cy; y < cy + CHUNK_SIZE; y++) {
+			for (unsigned int x = cx; x < cx + args.chunksize; x++) {
+				for (unsigned int y = cy; y < cy + args.chunksize; y++) {
 					char cpath[PATH_MAX];
 					snprintf(cpath, sizeof(cpath),
 							"%s/%d/%d/%d.png", args.outdir, args.zoomlevel, x, y);
 					write_png(cpath, TILE_SIZE, TILE_SIZE,
-							  &out[((y - cy) * CHUNK_SIZE + (x - cx)) * TILE_SIZE * TILE_SIZE],
+							  &out[((y - cy) * args.chunksize + (x - cx)) * TILE_SIZE * TILE_SIZE],
 							  args.colormap);
 					printf("wrote %s\n", cpath);
 				}
