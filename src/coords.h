@@ -36,8 +36,8 @@ static inline cl_float2 tile_to_wgs84(cl_float2 tile, int z)
 	return ret;
 }
 
-int init_projs();
-cl_float2 wgs84_to_meters(cl_float2 wgs);
+void init_projs();
+cl_float2 wgs84_to_meters(cl_float2 wgs, projPJ proj_meters);
 
 
 #endif

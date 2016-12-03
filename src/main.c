@@ -99,7 +99,7 @@ void print_gsl_matrix(gsl_matrix *mat)
 	printf("]\n");
 }
 
-void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out)
+void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out, projPJ proj_meters)
 {
 	int npoints = 9;
 	gsl_multifit_linear_workspace *gwsp = gsl_multifit_linear_alloc(npoints, 3);
@@ -117,7 +117,7 @@ void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out)
 			cl_float2 tile = {.x = xtile + (double)x / 2,
 							.y = ytile + (double)y / 2};
 			cl_float2 wgs = tile_to_wgs84(tile, zoom);
-			cl_float2 mets = wgs84_to_meters(wgs);
+			cl_float2 mets = wgs84_to_meters(wgs, proj_meters);
 
 			int pt = x * 3 + y;
 			// Inputs
@@ -171,6 +171,7 @@ struct arguments {
 	cl_float2 northwest;
 	cl_float2 southeast;
 	rgba_t *colormap;
+	projPJ proj_meters;
 };
 
 const char *argp_program_version = "cl-heatmap 1.0";
@@ -187,6 +188,7 @@ static struct argp_option argp_opts[] = {
 	{ "--boundaries",'b',	"BOUNDARIES",	0,	"Boundaries in WGS84 '50.12,14.23,51.23,15.33'", 0 },
 	{ "--chunksize",'l',	"CHUNK_SIZE",	0,	"Process tiles in CHUNK_SIZE x CHUNK_SIZE chunks", 0 },
 	{ "--device",	'd',	"DEVICE",		0,	"OpenCL device to use (-d 0.0)", 0 },
+	{ "--projection",'p',	"PROJECTION",	0,	"Proj4 specification of the cartesian projection (default=\"+init=epsg:3045\")", 0 },
 	{ NULL,		0,		NULL,			0,	NULL, 0 }
 };
 
@@ -279,6 +281,12 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		case 'd':
 			parse_device(arg, state);
 			break;
+		case 'p':
+			arguments->proj_meters = pj_init_plus(arg);
+			if (arguments->proj_meters == NULL) {
+				argp_error(state, "Failed to initialize projection: %s", pj_strerrno(pj_errno));
+			}
+			break;
 		default:
 			return ARGP_ERR_UNKNOWN;
 	}
@@ -302,6 +310,7 @@ int main(int argc, char *argv[])
 		.northwest = { .x = 50.17, .y = 14.24 },
 		.southeast = { .x = 49.95, .y = 14.70 },
 		.colormap = colormap_heat,
+		.proj_meters = NULL
 	};
 
 	argp_parse(&argp, argc, argv, 0, 0, &args);
@@ -341,8 +350,12 @@ int main(int argc, char *argv[])
 		datavals[i] = json_object_get_double(jval);
 	}
 
+	if (args.proj_meters == NULL) {
+		args.proj_meters = pj_init_plus("+init=epsg:3045");
+	}
+
 	for (unsigned int i = 0; i < datalen; i++) {
-		datapts[i] = wgs84_to_meters(datapts[i]);
+		datapts[i] = wgs84_to_meters(datapts[i], args.proj_meters);
 	}
 
 	// Render tiles
@@ -373,7 +386,7 @@ int main(int argc, char *argv[])
 				continue;
 			}
 			cl_float4 out[2];
-			generate_translation_tile(x, y, args.zoomlevel, out);
+			generate_translation_tile(x, y, args.zoomlevel, out, args.proj_meters);
 			FILE *fout = fopen(tpath, "w");
 			if (fout == NULL) {
 				perror("failed to write cache file\n");
