@@ -51,15 +51,11 @@ __kernel void generate_tile(global float4 *ptin,
 				if (dist < best) {
 					best = dist;
 				}
-				if (isnan(w) || w < 0.001)
-					continue;
 				sw += w;
 				val += vals[i] * w;
 			}
 			int cid = 0;
-			if (sw == 0.0)
-				sw = 1.0;
-			if (best < RANGE) {
+			if (best < RANGE && sw > 0.0) {
 				val /= sw;
 				//printf("%f\n", val);
 				float rval = (val - MIN) / MAX;
