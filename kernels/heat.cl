@@ -5,7 +5,7 @@
 float quartic_kernel(float dist, float bw)
 {
 	dist = clamp((float)(dist / bw), -0.9999f, 0.9999f);
-	return 15.0 / 16.0 * pow(1 - pow(dist, 2), 2);
+	return 15.0 / 16.0 * pow(1 - dist, 2);
 }
 
 __kernel void generate_tile(global float4 *ptin,
@@ -46,8 +46,8 @@ __kernel void generate_tile(global float4 *ptin,
 				//if (!in_bounding_box(pts[i], bbox)) {
 				//	continue;
 				//}
-				float dist = distance(pt, pts[i]);
-				float w = quartic_kernel(dist, RANGE);
+				float dist = pow(pt.x - pts[i].x, 2) + pow(pt.y - pts[i].y, 2);
+				float w = quartic_kernel(dist, RANGE * RANGE);
 				if (dist < best) {
 					best = dist;
 				}
@@ -55,7 +55,7 @@ __kernel void generate_tile(global float4 *ptin,
 				val += vals[i] * w;
 			}
 			int cid = 0;
-			if (best < RANGE && sw > 0.0) {
+			if (best < RANGE * RANGE && sw > 0.0) {
 				val /= sw;
 				//printf("%f\n", val);
 				float rval = (val - MIN) / MAX;
