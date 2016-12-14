@@ -179,16 +179,16 @@ const char *argp_program_bug_address = "<atx@atx.name>";
 static const char argp_doc[] = "TODO";
 
 static struct argp_option argp_opts[] = {
-	{ "--zoom",		'z',	"ZOOM",			0,	"Zoomlevel", 0 },
-	{ "--kernel",	'k',	"KERNEL",		0,	"Kernel to use", 0 },
-	{ "--outdir",	'o',	"OUTDIR",		0,	"Output directory", 0 },
-	{ "--input",	'i',	"INPUT",		0,	"Input JSON", 0 },
-	{ "--clargs",	'c',	"CLARGS",		0,	"OpenCL compiler arguments", 0 },
-	{ "--colormap",	'm',	"COLORMAP",		0,	"Colormap to use, available: [\"heat\"]", 0 },
-	{ "--boundaries",'b',	"BOUNDARIES",	0,	"Boundaries in WGS84 '50.12,14.23,51.23,15.33'", 0 },
-	{ "--chunksize",'l',	"CHUNK_SIZE",	0,	"Process tiles in CHUNK_SIZE x CHUNK_SIZE chunks", 0 },
-	{ "--device",	'd',	"DEVICE",		0,	"OpenCL device to use (-d 0.0)", 0 },
-	{ "--projection",'p',	"PROJECTION",	0,	"Proj4 specification of the cartesian projection (default=\"+init=epsg:3045\")", 0 },
+	{ "zoom",		'z',	"ZOOM",			0,	"Zoomlevel", 0 },
+	{ "kernel",	'k',	"KERNEL",		0,	"Kernel to use", 0 },
+	{ "outdir",	'o',	"OUTDIR",		0,	"Output directory", 0 },
+	{ "input",	'i',	"INPUT",		0,	"Input JSON", 0 },
+	{ "clargs",	'c',	"CLARGS",		0,	"OpenCL compiler arguments", 0 },
+	{ "colormap",	'm',	"COLORMAP",		0,	"Colormap to use, available: [\"heat\"]", 0 },
+	{ "boundaries",'b',	"BOUNDARIES",	0,	"Boundaries in WGS84 '50.12,14.23,51.23,15.33'", 0 },
+	{ "chunksize",'l',	"CHUNK_SIZE",	0,	"Process tiles in CHUNK_SIZE x CHUNK_SIZE chunks", 0 },
+	{ "device",	'd',	"DEVICE",		0,	"OpenCL device to use (-d 0.0)", 0 },
+	{ "projection",'p',	"PROJECTION",	0,	"Proj4 specification of the cartesian projection (default=\"+init=epsg:3045\")", 0 },
 	{ NULL,		0,		NULL,			0,	NULL, 0 }
 };
 
