@@ -1,5 +1,9 @@
 
 #include <stdio.h>
+#include <gsl/gsl_blas.h>
+#include <gsl/gsl_vector.h>
+#include <gsl/gsl_matrix.h>
+#include <gsl/gsl_multifit.h>
 
 #include "coords.h"
 
@@ -23,4 +27,65 @@ cl_float2 wgs84_to_meters(cl_float2 wgs, projPJ proj_meters)
 	ret.x = rx;
 	ret.y = ry;
 	return ret;
+}
+
+void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out, projPJ proj_meters)
+{
+	int side = 20;
+	int npoints = side * side;
+	gsl_multifit_linear_workspace *gwsp = gsl_multifit_linear_alloc(npoints, 3);
+	gsl_vector *yx = gsl_vector_alloc(npoints);
+	gsl_vector *yy = gsl_vector_alloc(npoints);
+	gsl_matrix *X = gsl_matrix_alloc(npoints, 3);
+	gsl_vector *cx = gsl_vector_alloc(3);
+	gsl_vector *cy = gsl_vector_alloc(3);
+	gsl_matrix *cov = gsl_matrix_alloc(npoints, npoints);
+	double chisq;
+
+	// Generate side x side training points
+	for (int x = 0; x < side; x++) {
+		for (int y = 0; y < side; y++) {
+			cl_float2 tile = {.x = xtile + (double)x / side,
+							  .y = ytile + (double)y / side};
+			cl_float2 wgs = tile_to_wgs84(tile, zoom);
+			cl_float2 mets = wgs84_to_meters(wgs, proj_meters);
+
+			int pt = x * side + y;
+			// Inputs
+			gsl_matrix_set(X, pt, 0, tile.x - xtile);
+			gsl_matrix_set(X, pt, 1, tile.y - ytile);
+			gsl_matrix_set(X, pt, 2,	 1);
+
+			// Outputs
+			gsl_vector_set(yx, pt, mets.x);
+			gsl_vector_set(yy, pt, mets.y);
+
+		}
+	}
+
+	// Fit
+	gsl_multifit_linear(X, yx, cx, cov, &chisq, gwsp);
+	gsl_multifit_linear(X, yy, cy, cov, &chisq, gwsp);
+
+	gsl_matrix *mtrans = gsl_matrix_alloc(3, 2);
+	gsl_matrix_set_col(mtrans, 0, cx);
+	gsl_matrix_set_col(mtrans, 1, cy);
+
+	// Output
+
+	out[0].x = gsl_matrix_get(mtrans, 0, 0);
+	out[0].y = gsl_matrix_get(mtrans, 1, 0);
+	out[0].z = gsl_matrix_get(mtrans, 2, 0);
+	out[1].x = gsl_matrix_get(mtrans, 0, 1);
+	out[1].y = gsl_matrix_get(mtrans, 1, 1);
+	out[1].z = gsl_matrix_get(mtrans, 2, 1);
+
+	gsl_matrix_free(mtrans);
+	gsl_matrix_free(cov);
+	gsl_vector_free(cy);
+	gsl_vector_free(cx);
+	gsl_matrix_free(X);
+	gsl_vector_free(yy);
+	gsl_vector_free(yx);
+	gsl_multifit_linear_free(gwsp);
 }

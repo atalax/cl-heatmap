@@ -38,6 +38,7 @@ static inline cl_float2 tile_to_wgs84(cl_float2 tile, int z)
 
 void init_projs();
 cl_float2 wgs84_to_meters(cl_float2 wgs, projPJ proj_meters);
+void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out, projPJ proj_meters);
 
 
 #endif
