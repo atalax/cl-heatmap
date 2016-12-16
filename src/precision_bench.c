@@ -9,6 +9,7 @@
 
 #define N_PTS		1000
 #define RECT_SIDE	50
+#define TILE_SIZE	256
 
 
 struct arguments {
@@ -201,11 +202,11 @@ int main(int argc, char *argv[])
 			printf("WTF?!");
 		}
 
-		printf(" avg sides:\n");
+		printf(" avg pixel size:\n");
 		cl_float2 res = calculate_avg_and_dev(xlens, ntiles);
-		printf("  x = %.2fm (+- %.3f) \n", res.x, res.y);
+		printf("  x = %.2fm (+- %.3f) \n", res.x / TILE_SIZE, res.y / TILE_SIZE);
 		res = calculate_avg_and_dev(ylens, ntiles);
-		printf("  y = %.2fm (+- %.3f) \n", res.x, res.y);
+		printf("  y = %.2fm (+- %.3f) \n", res.x / TILE_SIZE, res.y / TILE_SIZE);
 		printf(" avg errors:\n");
 		res = calculate_avg_and_dev(xerrs, npts);
 		printf("  x = %.2fm (+- %.3f)\n", res.x, res.y);
