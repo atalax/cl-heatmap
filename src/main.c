@@ -470,9 +470,9 @@ int main(int argc, char *argv[])
 				OCCHECK(ret);
 				ret = clSetKernelArg(clkrn, 2, sizeof(npts), &npts);
 				OCCHECK(ret);
-				ret = clSetKernelArg(clkrn, 3, npts * sizeof(chosenpts[0]), &pts_cl);
+				ret = clSetKernelArg(clkrn, 3, sizeof(pts_cl), &pts_cl);
 				OCCHECK(ret);
-				ret = clSetKernelArg(clkrn, 4, npts * sizeof(chosenvals[0]), &vals_cl);
+				ret = clSetKernelArg(clkrn, 4, sizeof(vals_cl), &vals_cl);
 				OCCHECK(ret);
 				ret = clSetKernelArg(clkrn, 5, sizeof(tile_cl), &tile_cl);
 				OCCHECK(ret);
