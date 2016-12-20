@@ -36,9 +36,74 @@ static inline cl_float2 tile_to_wgs84(cl_float2 tile, int z)
 	return ret;
 }
 
+struct rect {
+	cl_float2 lt; // Left top
+	cl_float2 rb; // Right bottom
+};
+
+static inline struct rect rect_make(cl_float2 a, cl_float2 b)
+{
+	struct rect ret = {
+		.lt = a,
+		.rb = b
+	};
+
+	if (ret.lt.x > ret.rb.x) {
+		float tmp = ret.lt.x;
+		ret.lt.x = ret.rb.x;
+		ret.rb.x = tmp;
+	}
+	if (ret.lt.y > ret.rb.y) {
+		float tmp = ret.lt.y;
+		ret.lt.y = ret.rb.y;
+		ret.rb.y = tmp;
+	}
+
+	return ret;
+}
+
+static inline float rect_left(struct rect rect)
+{
+	return rect.lt.x;
+}
+
+static inline float rect_right(struct rect rect)
+{
+	return rect.rb.x;
+}
+
+static inline float rect_top(struct rect rect)
+{
+	return rect.lt.y;
+}
+
+static inline float rect_bot(struct rect rect)
+{
+	return rect.rb.y;
+}
+
+static inline bool rect_is_inside(struct rect rect, cl_float2 pt)
+{
+	return pt.x <= rect_right(rect) && pt.x >= rect_left(rect) &&
+			pt.y <= rect_bot(rect) && pt.y >= rect_top(rect);
+}
+
+static inline struct rect rect_inflate(struct rect rect, float by)
+{
+	return (struct rect){
+		.lt = (cl_float2){ .x = rect.lt.x - by, .y = rect.lt.y - by },
+		.rb = (cl_float2){ .x = rect.rb.x + by, .y = rect.rb.y + by }
+	};
+}
+
 void init_projs();
 cl_float2 wgs84_to_meters(cl_float2 wgs, projPJ proj_meters);
 void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out, projPJ proj_meters);
+
+static inline cl_float2 tile_to_meters(cl_float2 tile, int zoom, projPJ proj_meters)
+{
+	return wgs84_to_meters(tile_to_wgs84(tile, zoom), proj_meters);
+}
 
 
 #endif

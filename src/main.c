@@ -84,7 +84,6 @@ void write_png(char *fname, int width, int height, uint8_t *img, rgba_t *colorma
 
 struct arguments {
 	int zoomlevel;
-	unsigned int chunksize;
 	unsigned int platformid;
 	unsigned int deviceid;
 	char *kernel;
@@ -95,6 +94,7 @@ struct arguments {
 	cl_float2 southeast;
 	rgba_t *colormap;
 	projPJ proj_meters;
+	float prefilter;
 };
 
 const char *argp_program_version = "cl-heatmap 1.0";
@@ -109,9 +109,9 @@ static struct argp_option argp_opts[] = {
 	{ "clargs",	'c',	"CLARGS",		0,	"OpenCL compiler arguments", 0 },
 	{ "colormap",	'm',	"COLORMAP",		0,	"Colormap to use, available: [\"heat\"]", 0 },
 	{ "boundaries",'b',	"BOUNDARIES",	0,	"Boundaries in WGS84 '50.12,14.23,51.23,15.33'", 0 },
-	{ "chunksize",'l',	"CHUNK_SIZE",	0,	"Process tiles in CHUNK_SIZE x CHUNK_SIZE chunks", 0 },
 	{ "device",	'd',	"DEVICE",		0,	"OpenCL device to use (-d 0.0)", 0 },
 	{ "projection",'p',	"PROJECTION",	0,	"Proj4 specification of the cartesian projection (default=\"+init=epsg:3045\")", 0 },
+	{ "prefilter", 'f', "PREFILTER",	0,	"Do not pass a point to the kernel if it is further than PREFILTER", 0 },
 	{ NULL,		0,		NULL,			0,	NULL, 0 }
 };
 
@@ -145,6 +145,17 @@ static long safe_parse_long(struct argp_state *state, char *name, char *arg)
 {
 	char *end = NULL;
 	long ret = strtol(arg, &end, 10);
+	if (*end != '\0') {
+		argp_error(state, "%s has to be an integer!", name);
+		return 0; // We shouldn't get here
+	}
+	return ret;
+}
+
+static double safe_parse_double(struct argp_state *state, char *name, char *arg)
+{
+	char *end = NULL;
+	float ret = strtod(arg, &end);
 	if (*end != '\0') {
 		argp_error(state, "%s has to be an integer!", name);
 		return 0; // We shouldn't get here
@@ -198,9 +209,6 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 		case 'b':
 			parse_opt_boundaries(arg, state);
 			break;
-		case 'l':
-			arguments->chunksize = safe_parse_long(state, "CHUNK_SIZE", arg);
-			break;
 		case 'd':
 			parse_device(arg, state);
 			break;
@@ -209,6 +217,9 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 			if (arguments->proj_meters == NULL) {
 				argp_error(state, "Failed to initialize projection: %s", pj_strerrno(pj_errno));
 			}
+			break;
+		case 'f':
+			arguments->prefilter = safe_parse_double(state, "PREFILTER", arg);
 			break;
 		default:
 			return ARGP_ERR_UNKNOWN;
@@ -223,7 +234,6 @@ int main(int argc, char *argv[])
 {
 	struct arguments args = {
 		.zoomlevel = 12,
-		.chunksize = 4,
 		.platformid = 0,
 		.deviceid = 0,
 		.kernel = NULL,
@@ -233,7 +243,8 @@ int main(int argc, char *argv[])
 		.northwest = { .x = 50.17, .y = 14.24 },
 		.southeast = { .x = 49.95, .y = 14.70 },
 		.colormap = colormap_heat,
-		.proj_meters = NULL
+		.proj_meters = NULL,
+		.prefilter = INFINITY
 	};
 
 	argp_parse(&argp, argc, argv, 0, 0, &args);
@@ -283,9 +294,9 @@ int main(int argc, char *argv[])
 
 	// Render tiles
 	cl_float2 tilelt = round_point(wgs84_to_tile(args.northwest, args.zoomlevel),
-								args.chunksize, false);
+								1, false);
 	cl_float2 tilerb = round_point(wgs84_to_tile(args.southeast, args.zoomlevel),
-								args.chunksize, true);
+								1, true);
 	printf("Rendering tiles from %dx%d to %dx%d on zoomlevel %d\n",
 			(int)tilelt.x, (int)tilelt.y,
 			(int)tilerb.x, (int)tilerb.y,
@@ -371,8 +382,8 @@ int main(int argc, char *argv[])
 	char compargs[1000];
 	bzero(compargs, sizeof(compargs));
 	snprintf(compargs, ARRAY_SIZE(compargs),
-			"-I%s -DCOLORS_LEN=%d -DTILE_SIZE=%d -DCHUNK_SIZE=%d -DSTATION_CNT=%lu %s",
-			kdir, COLORMAP_LEN, TILE_SIZE, args.chunksize, datalen, args.clargs);
+			"-I%s -DCOLORS_LEN=%d -DTILE_SIZE=%d %s",
+			kdir, COLORMAP_LEN, TILE_SIZE, args.clargs);
 
 	cl_program clprg = clCreateProgramWithSource(clctx, 1, (const char **)&clsrc, &len, &ret);
 	OCCHECK(ret);
@@ -386,76 +397,110 @@ int main(int argc, char *argv[])
 		printf("%s\n", msg);
 		return EXIT_FAILURE;
 	}
-	cl_kernel clkrn = clCreateKernel(clprg, "generate_tile", &ret);
+	cl_kernel clkrn = clCreateKernel(clprg, "generate_pixel", &ret);
 	OCCHECK(ret);
 
-	// Load the data
-	size_t chunklen = TILE_SIZE * TILE_SIZE * args.chunksize * args.chunksize;
-	size_t ptinlen = 2 * args.chunksize * args.chunksize;
-	cl_float4 *ptin = calloc(ptinlen, sizeof(cl_float4));
-	uint8_t *out = calloc(chunklen, sizeof(rgba_t));
+	const cl_image_format imformat = { CL_R, CL_UNSIGNED_INT8 };
+	const cl_image_desc imdesc = {
+		.image_type = CL_MEM_OBJECT_IMAGE2D,
+		.image_width = TILE_SIZE,
+		.image_height = TILE_SIZE,
+		.image_depth = 0,
+		.image_array_size = 1,
+		.image_row_pitch = 0,
+		.image_slice_pitch = 0,
+		.num_samples = 0,
+		.buffer = NULL
+	};
+	size_t tile_len = TILE_SIZE * TILE_SIZE * sizeof(uint8_t);
+	uint8_t *tile = malloc(tile_len);
+	cl_mem tile_cl = clCreateImage(clctx, CL_MEM_WRITE_ONLY, &imformat, &imdesc, NULL, &ret);
+	OCCHECK(ret);
+	// Note that we allocate the upper-bound of input points, this should not be
+	// a lot of memory anyway
+	cl_float2 *chosenpts = calloc(datalen, sizeof(cl_float2));
+	cl_mem pts_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY, datalen * sizeof(cl_float2),
+								   NULL, &ret);
+	OCCHECK(ret);
+	float *chosenvals = calloc(datalen, sizeof(float));
+	cl_mem vals_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY, datalen * sizeof(cl_float),
+									NULL, &ret);
+	OCCHECK(ret);
 
-	cl_mem stats_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-									 datalen * sizeof(cl_float2),
-									 datapts, &ret);
-	OCCHECK(ret);
-	cl_mem tdoas_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-									 datalen * sizeof(float),
-									 datavals, &ret);
-	OCCHECK(ret);
+	for (unsigned int tx = tilelt.x; tx <= tilerb.x; tx++) {
+		for (unsigned int ty = tilelt.y; ty <= tilerb.y; ty++) {
+			printf("- %d x %d\n", tx, ty);
+			// Load the cached translation tile
+			char cpath[PATH_MAX];
+			snprintf(cpath, sizeof(cpath),
+					"%s/%d/%d/%d.map", args.outdir, args.zoomlevel, tx, ty);
+			cl_float4 tr[2];
+			FILE *file = fopen(cpath, "r");
+			fread(tr, 1, sizeof(tr), file);
+			fclose(file);
 
-	cl_mem ptin_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY,
-									ptinlen * sizeof(ptin[0]), NULL, &ret);
-	OCCHECK(ret);
-	cl_mem out_cl = clCreateBuffer(clctx, CL_MEM_WRITE_ONLY,
-								   chunklen * sizeof(out[0]), NULL, &ret);
-	OCCHECK(ret);
+			// Now we attempt to filter out points which are too far away to make
+			// any difference for the tile values
+			struct rect tilet = rect_make((cl_float2){ .x = tx	  , .y = ty	   },
+										  (cl_float2){ .x = tx + 1, .y = ty + 1});
 
-	// Generate the tiles
-	for (unsigned int cx = tilelt.x; cx < tilerb.x; cx += args.chunksize) {
-		for (unsigned int cy = tilelt.y; cy < tilerb.y; cy += args.chunksize) {
-			printf("Generating chunk %dx%d +%d\n", cx, cy, args.chunksize);
-			// Load the coordinate mappings
-			for (unsigned int x = 0; x < args.chunksize; x++) {
-				for (unsigned int y = 0; y < args.chunksize; y++) {
-					char cpath[PATH_MAX];
-					snprintf(cpath, sizeof(cpath),
-							"%s/%d/%d/%d.map", args.outdir, args.zoomlevel, x + cx, y + cy);
-					FILE *file = fopen(cpath, "r");
-					fread(&ptin[2 * (y * args.chunksize + x)],
-							sizeof(ptin[0]), 2, file);
-					fclose(file);
+			struct rect tilems = rect_make(tile_to_meters(tilet.lt, args.zoomlevel, args.proj_meters),
+										   tile_to_meters(tilet.rb, args.zoomlevel, args.proj_meters));
+			tilems = rect_inflate(tilems, args.prefilter);
+			cl_uint npts = 0;
+			for (size_t i = 0; i < datalen; i++) {
+				if (!rect_is_inside(tilems, datapts[i])) {
+					continue;
 				}
+				chosenpts[npts] = datapts[i];
+				chosenvals[npts] = datavals[i];
+				npts++;
 			}
-			clEnqueueWriteBuffer(clque, ptin_cl, CL_TRUE, 0, ptinlen * sizeof(ptin[0]),
-								 ptin, 0, NULL, NULL);
-			ret = clSetKernelArg(clkrn, 0, sizeof(ptin_cl), &ptin_cl);
-			ret = clSetKernelArg(clkrn, 1, sizeof(stats_cl), &stats_cl);
-			ret = clSetKernelArg(clkrn, 2, sizeof(tdoas_cl), &tdoas_cl);
-			ret = clSetKernelArg(clkrn, 3, sizeof(out_cl), &out_cl);
-			size_t global_work_size[] = { args.chunksize, args.chunksize };
-			size_t local_work_size[] = { 1, 1 };
-			ret = clEnqueueNDRangeKernel(clque, clkrn, 2, NULL,
-										 global_work_size, local_work_size,
-										 0, NULL, NULL);
-			OCCHECK(ret);
-			clFinish(clque);
+			bzero(tile, TILE_SIZE * TILE_SIZE);
+			if (npts != 0) {
+				printf("Generating %d x %d from %d\n", tx, ty, npts);
+				clEnqueueWriteBuffer(clque, pts_cl, CL_TRUE, 0, npts * sizeof(chosenpts[0]),
+									 chosenpts, 0, NULL, NULL);
+				clEnqueueWriteBuffer(clque, vals_cl, CL_TRUE, 0, npts * sizeof(chosenvals[0]),
+									 chosenvals, 0, NULL, NULL);
 
-			clEnqueueReadBuffer(clque, out_cl, CL_TRUE, 0, chunklen * sizeof(out[0]),
-								out, 0, NULL, NULL);
-			// Write the files
-			// TODO: Move this into a separate thread
-			for (unsigned int x = cx; x < cx + args.chunksize; x++) {
-				for (unsigned int y = cy; y < cy + args.chunksize; y++) {
-					char cpath[PATH_MAX];
-					snprintf(cpath, sizeof(cpath),
-							"%s/%d/%d/%d.png", args.outdir, args.zoomlevel, x, y);
-					write_png(cpath, TILE_SIZE, TILE_SIZE,
-							  &out[((y - cy) * args.chunksize + (x - cx)) * TILE_SIZE * TILE_SIZE],
-							  args.colormap);
-					printf("wrote %s\n", cpath);
-				}
+				ret = clSetKernelArg(clkrn, 0, sizeof(tr[0]), &tr[0]);
+				OCCHECK(ret);
+				ret = clSetKernelArg(clkrn, 1, sizeof(tr[1]), &tr[1]);
+				OCCHECK(ret);
+				ret = clSetKernelArg(clkrn, 2, sizeof(npts), &npts);
+				OCCHECK(ret);
+				ret = clSetKernelArg(clkrn, 3, npts * sizeof(chosenpts[0]), &pts_cl);
+				OCCHECK(ret);
+				ret = clSetKernelArg(clkrn, 4, npts * sizeof(chosenvals[0]), &vals_cl);
+				OCCHECK(ret);
+				ret = clSetKernelArg(clkrn, 5, sizeof(tile_cl), &tile_cl);
+				OCCHECK(ret);
+
+				size_t global_work_size[] = { TILE_SIZE, TILE_SIZE };
+				size_t local_work_size[] = { 1, 1 };
+				ret = clEnqueueNDRangeKernel(clque, clkrn, 2, NULL,
+											 global_work_size, local_work_size,
+											 0, NULL, NULL);
+				OCCHECK(ret);
+				clFinish(clque);
+
+				// Read the image and save to a file
+				clEnqueueReadImage(clque, tile_cl, CL_TRUE,
+								  (size_t[3]){0, 0, 0},
+								  (size_t[3]){TILE_SIZE, TILE_SIZE, 1},
+								  0, 0, tile, 0, NULL, NULL);
+
+			} else {
+				printf("Skipping %d x %d\n", tx, ty);
 			}
+			// TODO: Not really significant optimization: write a blank png once and just copy it
+			snprintf(cpath, sizeof(cpath),
+					"%s/%d/%d/%d.png", args.outdir, args.zoomlevel, tx, ty);
+			write_png(cpath, TILE_SIZE, TILE_SIZE,
+					  tile,
+					  args.colormap);
+			printf("wrote %s\n", cpath);
 		}
 	}
 
@@ -463,12 +508,13 @@ int main(int argc, char *argv[])
 	ret = clFinish(clque);
 	ret = clReleaseKernel(clkrn);
 	ret = clReleaseProgram(clprg);
-	ret = clReleaseMemObject(stats_cl);
-	ret = clReleaseMemObject(tdoas_cl);
-	ret = clReleaseMemObject(out_cl);
+	ret = clReleaseMemObject(vals_cl);
+	ret = clReleaseMemObject(pts_cl);
+	ret = clReleaseMemObject(tile_cl);
 	ret = clReleaseContext(clctx);
 
-	free(out);
-	free(ptin);
+	free(chosenvals);
+	free(chosenpts);
+	free(tile);
 	free(clsrc);
 }

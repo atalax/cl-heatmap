@@ -8,60 +8,44 @@ float quartic_kernel(float dist, float bw)
 	return 15.0 / 16.0 * pow(1 - dist, 2);
 }
 
-__kernel void generate_tile(global float4 *ptin,
-							global float2 *pts,
-							global float *vals,
-							global uchar *out_)
+__kernel void generate_pixel(
+		float4 trx,
+		float4 try,
+		uint npts,
+		read_only global float2 *pts,
+		read_only global float *vals,
+		write_only image2d_t out)
 {
-	uint cx = get_global_id(0);
-	uint cy = get_global_id(1);
-	uint off = (cy * CHUNK_SIZE + cx) * TILE_SIZE * TILE_SIZE;
-	global uchar *out = &out_[off];
-	uint off2 = 2 * (cy * CHUNK_SIZE + cx);
-	float4 trx = ptin[off2 + 0];
-	float4 try = ptin[off2 + 1];
+	uint x = get_global_id(0);
+	uint y = get_global_id(1);
 
-	// This should be far enough
-	float2 cornera = tile_to_cartesian((float2)(-1.0, -1.0), trx, try);
-	float2 cornerb = tile_to_cartesian((float2)( 2.0,  2.0), trx, try);
+	float2 self = tile_to_cartesian((float2)((float)x / TILE_SIZE, (float)y / TILE_SIZE),
+								  trx, try);
 
-	// The transformations axis might not actually point in the same direction as the tile axis
-	float4 bbox = (float4) (
-		min(cornera.x, cornerb.x),
-		min(cornera.y, cornerb.y),
-		max(cornera.x, cornerb.x),
-		max(cornera.y, cornerb.y)
-	);
-
-	for (uint x = 0; x < TILE_SIZE; x++) {
-		for (uint y = 0; y < TILE_SIZE; y++) {
-			float2 pt = tile_to_cartesian((float2)((float)x / TILE_SIZE, (float)y / TILE_SIZE),
-								   trx, try);
-			//printf("Transformed %f %f to %f %f\n",
-			//		at.x, at.y, pt.x, pt.y);
-			float val = 0.0;
-			float sw = 0.0;
-			float best = FLT_MAX;
-			for (uint i = 0; i < STATION_CNT; i++) {
-				//if (!in_bounding_box(pts[i], bbox)) {
-				//	continue;
-				//}
-				float dist = pow(pt.x - pts[i].x, 2) + pow(pt.y - pts[i].y, 2);
-				float w = quartic_kernel(dist, RANGE * RANGE);
-				if (dist < best) {
-					best = dist;
-				}
-				sw += w;
-				val += vals[i] * w;
-			}
-			int cid = 0;
-			if (best < RANGE * RANGE && sw > 0.0) {
-				val /= sw;
-				//printf("%f\n", val);
-				float rval = (val - MIN) / MAX;
-				cid = clamp((int)(rval * COLORS_LEN), 1, COLORS_LEN - 1);
-			}
-			out[y * TILE_SIZE + x] = cid;
+	float val = 0.0;
+	float sw = 0.0;
+	float best = FLT_MAX;
+	for (uint i = 0; i < npts; i++) {
+		float dist = pow(self.x - pts[i].x, 2) + pow(self.y - pts[i].y, 2);
+		float w = quartic_kernel(dist, RANGE * RANGE);
+		if (dist < best) {
+			best = dist;
 		}
+		sw += w;
+		val += vals[i] * w;
 	}
+	int cid = 0;
+	if (best < RANGE * RANGE && sw > 0.0) {
+		val /= sw;
+		float rval = (val - MIN) / MAX;
+		cid = clamp((int)(rval * COLORS_LEN), 1, COLORS_LEN - 1);
+	}
+
+#ifdef HIGHLIGHT_BORDERS
+	if (x == 0 || y == 0 || x == TILE_SIZE - 1 || y == TILE_SIZE - 1) {
+		cid = 150;
+	}
+#endif
+
+	write_imageui(out, (int2)(x, y), (uint4)(cid, 0, 0, 0));
 }
