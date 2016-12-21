@@ -4,6 +4,7 @@
 #define UTILS_H
 
 #include <stdio.h>
+#include <sys/stat.h>
 
 #define max(a, b) ({ \
 	__typeof__(a) _a = (a); \
@@ -25,5 +26,6 @@
 	((long)(_x / _t)) * _t;})
 
 int file_read_whole(char *path, char **data, size_t *len);
+int mkdir_recursive(char *path, mode_t mode);
 
 #endif

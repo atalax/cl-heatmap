@@ -229,6 +229,38 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state)
 
 static struct argp argp = { argp_opts, parse_opt, NULL, argp_doc, NULL, NULL, NULL };
 
+static void fetch_tile_transform(int z, int x, int y, char *cachedir,
+								 projPJ proj_meters, cl_float4 *out)
+{
+	char dirpath[PATH_MAX];
+	snprintf(dirpath, sizeof(dirpath),
+			"%s/%d/%d", cachedir, z, x);
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path),
+			"%s/%d.map", dirpath, y);
+	FILE *file = fopen(path, "r");
+	// TODO: Maybe add more error checks?
+	if (file == NULL) {
+		generate_translation_tile(x, y, z, out, proj_meters);
+		int ret = mkdir_recursive(dirpath, S_IRWXU);
+		if (ret < 0) {
+			printf("failed to mkdir %s\n", dirpath);
+		}
+		FILE *fout = fopen(path, "w");
+		if (fout == NULL) {
+			printf("failed to save cache file %s\n", path);
+			return;
+		}
+		printf("generated %s\n", path);
+		fwrite(out, sizeof(out[0]), 2, fout);
+		fclose(fout);
+	} else {
+		printf("cache read %s\n", path);
+		fread(out, sizeof(out[0]), 2, file);
+		fclose(file);
+	}
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -306,31 +338,6 @@ int main(int argc, char *argv[])
 	char zpath[PATH_MAX];
 	snprintf(zpath, sizeof(zpath), "%s/%d", args.outdir, args.zoomlevel);
 	mkdir(zpath, 0755);
-
-	printf("Generating coordinate translation cache...\n");
-	// TODO: Multithread this (or ProjCL this)
-	for (unsigned int x = tilelt.x; x <= tilerb.x; x++) {
-		char xpath[PATH_MAX];
-		snprintf(xpath, sizeof(xpath), "%s/%d", zpath, x);
-		mkdir(xpath, 0755);
-		for (unsigned int y = tilelt.y; y <= tilerb.y; y++) {
-			char tpath[PATH_MAX];
-			snprintf(tpath, sizeof(tpath), "%s/%d.map", xpath, y);
-			if (!access(tpath, F_OK)) {
-				continue;
-			}
-			cl_float4 out[2];
-			generate_translation_tile(x, y, args.zoomlevel, out, args.proj_meters);
-			FILE *fout = fopen(tpath, "w");
-			if (fout == NULL) {
-				perror("failed to write cache file\n");
-				return EXIT_FAILURE;
-			}
-			printf("generated %s\n", tpath);
-			fwrite(out, sizeof(out[0]), ARRAY_SIZE(out), fout);
-			fclose(fout);
-		}
-	}
 
 	printf("OCL time!\n");
 
@@ -430,14 +437,9 @@ int main(int argc, char *argv[])
 	for (unsigned int tx = tilelt.x; tx <= tilerb.x; tx++) {
 		for (unsigned int ty = tilelt.y; ty <= tilerb.y; ty++) {
 			printf("- %d x %d\n", tx, ty);
-			// Load the cached translation tile
-			char cpath[PATH_MAX];
-			snprintf(cpath, sizeof(cpath),
-					"%s/%d/%d/%d.map", args.outdir, args.zoomlevel, tx, ty);
 			cl_float4 tr[2];
-			FILE *file = fopen(cpath, "r");
-			fread(tr, 1, sizeof(tr), file);
-			fclose(file);
+			fetch_tile_transform(args.zoomlevel, tx, ty, args.outdir,
+								 args.proj_meters, tr);
 
 			// Now we attempt to filter out points which are too far away to make
 			// any difference for the tile values
@@ -495,12 +497,13 @@ int main(int argc, char *argv[])
 				printf("Skipping %d x %d\n", tx, ty);
 			}
 			// TODO: Not really significant optimization: write a blank png once and just copy it
-			snprintf(cpath, sizeof(cpath),
+			char path[PATH_MAX];
+			snprintf(path, sizeof(path),
 					"%s/%d/%d/%d.png", args.outdir, args.zoomlevel, tx, ty);
-			write_png(cpath, TILE_SIZE, TILE_SIZE,
+			write_png(path, TILE_SIZE, TILE_SIZE,
 					  tile,
 					  args.colormap);
-			printf("wrote %s\n", cpath);
+			printf("wrote %s\n", path);
 		}
 	}
 
