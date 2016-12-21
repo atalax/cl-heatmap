@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <bsd/string.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -260,6 +261,53 @@ static void fetch_tile_transform(int z, int x, int y, char *cachedir,
 	}
 }
 
+static char *load_kernel(const char *name, char **retpath)
+{
+	char *data = NULL;
+	size_t len = 0;
+	if (strchr(name, '/')) {
+		// Consider it an absolute name
+		int ret = file_read_whole(name, &data, &len);
+		if (ret < 0) {
+			perror("Failed to load kernel");
+			return NULL;
+		}
+		*retpath = strdup(name);
+	} else {
+		const char *paths[] = {
+			"./",
+			"../kernels", // For running from build/
+			"./kernels",
+			"/usr/share/cl-heatmap/kernels",
+			"/usr/local/share/cl-heatmap/kernels",
+		};
+
+		for (size_t i = 0; i < ARRAY_SIZE(paths); i++) {
+			char path[PATH_MAX];
+			snprintf(path, sizeof(path), "%s/%s", paths[i], name);
+
+			// Okay, technically we can have OpenCL sources without .cl
+			if (!strends(path, ".cl")) {
+				strlcat(path, ".cl", sizeof(path));
+			}
+
+			int ret = file_read_whole(path, &data, &len);
+			if (ret >= 0) {
+				*retpath = strdup(path);
+				break;
+			}
+		}
+	}
+
+	if (data != NULL) {
+		// Zero-terminate the sources
+		data = realloc(data, len + 1);
+		data[len] = '\0';
+	}
+
+	return data;
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -381,13 +429,15 @@ int main(int argc, char *argv[])
 	OCCHECK(ret);
 
 	// Build the kernel
-	FILE *fsrc = fopen(args.kernel, "r");
-	char *clsrc = malloc(MAX_SOURCE_SIZE);
-	size_t len = fread(clsrc, 1, MAX_SOURCE_SIZE, fsrc);
-	clsrc[len] = '\0';
+	char *kpath = NULL;
+	char *clsrc = load_kernel(args.kernel, &kpath);
 
-	char kpath[PATH_MAX];
-	strncpy(kpath, args.kernel, sizeof(kpath));
+	if (!clsrc) {
+		return EXIT_FAILURE;
+	}
+
+	printf("loaded kernel from %s\n", kpath);
+
 	char *kdir = dirname(kpath);
 	char compargs[1000];
 	bzero(compargs, sizeof(compargs));
@@ -395,7 +445,7 @@ int main(int argc, char *argv[])
 			"-I%s -DCOLORS_LEN=%d -DTILE_SIZE=%d %s",
 			kdir, COLORMAP_LEN, TILE_SIZE, args.clargs);
 
-	cl_program clprg = clCreateProgramWithSource(clctx, 1, (const char **)&clsrc, &len, &ret);
+	cl_program clprg = clCreateProgramWithSource(clctx, 1, (const char **)&clsrc, NULL, &ret);
 	OCCHECK(ret);
 	ret = clBuildProgram(clprg, 1, devid, compargs, NULL, NULL);
 	if (ret != CL_SUCCESS) {

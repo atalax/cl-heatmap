@@ -10,7 +10,7 @@
 
 #include "utils.h"
 
-int file_read_whole(char *path, char **data, size_t *len)
+int file_read_whole(const char *path, char **data, size_t *len)
 {
 	size_t llen;
 	if (len == NULL) {
@@ -58,4 +58,16 @@ int mkdir_recursive(char *path, mode_t mode)
 
 	}
 	return 0;
+}
+
+bool strends(const char *str, const char *suffix)
+{
+	int strl = strlen(str);
+	int suffl = strlen(suffix);
+
+	if (suffl > strl) {
+		return false;
+	}
+
+	return strcmp(&str[strl - suffl], suffix) == 0;
 }

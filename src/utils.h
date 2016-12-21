@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <sys/stat.h>
+#include <stdbool.h>
 
 #define max(a, b) ({ \
 	__typeof__(a) _a = (a); \
@@ -25,7 +26,8 @@
 	__typeof__(t) _t = (t); \
 	((long)(_x / _t)) * _t;})
 
-int file_read_whole(char *path, char **data, size_t *len);
+int file_read_whole(const char *path, char **data, size_t *len);
 int mkdir_recursive(char *path, mode_t mode);
+bool strends(const char *str, const char *suffix);
 
 #endif
