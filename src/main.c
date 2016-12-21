@@ -23,9 +23,10 @@
 #include "colormaps.h"
 #include "coords.h"
 #include "utils.h"
+#include "log.h"
 
 #define MAX_SOURCE_SIZE 100000
-#define OCCHECK(x) if ((x) != CL_SUCCESS) { fprintf(stderr, "OCL Error! %d @%d\n", x, __LINE__); exit(EXIT_FAILURE); }
+#define OCLCHECK(x) if ((x) != CL_SUCCESS) { log_error_clerr("OCL Error!", x); exit(EXIT_FAILURE); }
 #define TILE_SIZE 256
 
 void write_png(char *fname, int width, int height, uint8_t *img, rgba_t *colormap)
@@ -41,7 +42,7 @@ void write_png(char *fname, int width, int height, uint8_t *img, rgba_t *colorma
 	png_infop png_info = png_create_info_struct(png_ptr);
 
 	if (setjmp(png_jmpbuf(png_ptr))) {
-		fprintf(stderr, "Error during png creation\n");
+		log_error("Error during png creation");
 		return;
 	}
 
@@ -245,18 +246,18 @@ static void fetch_tile_transform(int z, int x, int y, char *cachedir,
 		generate_translation_tile(x, y, z, out, proj_meters);
 		int ret = mkdir_recursive(dirpath, S_IRWXU);
 		if (ret < 0) {
-			printf("failed to mkdir %s\n", dirpath);
+			log_error_errno("Failed to mkdir %s", dirpath);
 		}
 		FILE *fout = fopen(path, "w");
 		if (fout == NULL) {
-			printf("failed to save cache file %s\n", path);
+			log_error_errno("Failed to save tile transform cache file %s", path);
 			return;
 		}
-		printf("generated %s\n", path);
+		log_info("Generated cache file %s", path);
 		fwrite(out, sizeof(out[0]), 2, fout);
 		fclose(fout);
 	} else {
-		printf("cache read %s\n", path);
+		log_info("Loaded cache file %s", path);
 		fread(out, sizeof(out[0]), 2, file);
 		fclose(file);
 	}
@@ -343,13 +344,13 @@ int main(int argc, char *argv[])
 	// Parse the input JSON
 	char *jsonstr;
 	if (file_read_whole(args.jspath, &jsonstr, NULL)) {
-		perror("failed to read the input JSON file");
+		log_error_errno("Failed to read the input JSON file %s", args.jspath);
 		return EXIT_FAILURE;
 	}
 	struct json_object *jroot = json_tokener_parse(jsonstr);
 	struct json_object *jpts;
 	if (!json_object_object_get_ex(jroot, "points", &jpts)) {
-		fprintf(stderr, "key \"points\" not found!\n");
+		log_error("Key \"points\" not found in the input file");
 		return EXIT_FAILURE;
 	}
 	size_t datalen = json_object_array_length(jpts);
@@ -368,6 +369,8 @@ int main(int argc, char *argv[])
 		datavals[i] = json_object_get_double(jval);
 	}
 
+	log_info("Loaded %ld points", datalen);
+
 	if (args.proj_meters == NULL) {
 		args.proj_meters = pj_init_plus("+init=epsg:3045");
 	}
@@ -381,26 +384,25 @@ int main(int argc, char *argv[])
 			round_point(wgs84_to_tile(args.bounds.rb, args.zoomlevel), 1, true));
 
 	// Render tiles
-	printf("Rendering tiles from %dx%d to %dx%d on zoomlevel %d\n",
-			(int)rect_left(tilebounds), (int)rect_top(tilebounds),
-			(int)rect_right(tilebounds), (int)rect_bot(tilebounds),
-			args.zoomlevel);
+	log_info("Rendering tiles from (%d,%d) to (%d,%d) on zoomlevel %d",
+			 (int)rect_left(tilebounds), (int)rect_top(tilebounds),
+			 (int)rect_right(tilebounds), (int)rect_bot(tilebounds),
+			 args.zoomlevel);
 
 
 	char zpath[PATH_MAX];
 	snprintf(zpath, sizeof(zpath), "%s/%d", args.outdir, args.zoomlevel);
 	mkdir(zpath, 0755);
 
-	printf("OCL time!\n");
-
-	printf("Attempting to use platform = %d and device = %d\n", args.platformid, args.deviceid);
+	log_warn("Starting OpenCL!");
+	log_debug("Attempting to use platform = %d and device = %d", args.platformid, args.deviceid);
 
 	// Initialize OpenCL
 	cl_platform_id pids[10];
 	cl_uint cnt;
 	clGetPlatformIDs(ARRAY_SIZE(pids), pids, &cnt);
 	if (args.platformid > cnt - 1) {
-		fprintf(stderr, "Platform id = %d not found!\n", args.platformid);
+		log_error("Platform id = %d not found!", args.platformid);
 		exit(EXIT_FAILURE);
 	}
 	cl_platform_id platform = pids[args.platformid];
@@ -408,12 +410,12 @@ int main(int argc, char *argv[])
 	clGetPlatformInfo(platform, CL_PLATFORM_NAME, sizeof(platname), platname, NULL);
 	char platver[500];
 	clGetPlatformInfo(platform, CL_PLATFORM_VERSION, sizeof(platver), platver, NULL);
-	printf("OpenCL Platform %s  %s\n", platname, platver);
+	log_info("OpenCL Platform %s  %s", platname, platver);
 
 	cl_device_id dids[10];
 	clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, ARRAY_SIZE(dids), dids, &cnt);
 	if (args.deviceid > cnt - 1) {
-		fprintf(stderr, "Device id = %d not found!\n", args.deviceid);
+		log_error("Device id = %d not found!", args.deviceid);
 		exit(EXIT_FAILURE);
 	}
 	cl_device_id *devid = &dids[args.deviceid];
@@ -421,13 +423,13 @@ int main(int argc, char *argv[])
 	clGetDeviceInfo(*devid, CL_DEVICE_NAME, sizeof(devname), devname, NULL);
 	char devver[500];
 	clGetDeviceInfo(*devid, CL_DEVICE_VERSION, sizeof(devver), devver, NULL);
-	printf("OpenCL Device %s  %s\n", devname, devver);
+	log_info("OpenCL Device %s  %s", devname, devver);
 
 	cl_int ret;
 	cl_context clctx = clCreateContext(NULL, 1, devid, NULL, NULL, &ret);
-	OCCHECK(ret);
+	OCLCHECK(ret);
 	cl_command_queue clque = clCreateCommandQueue(clctx, *devid, 0, &ret);
-	OCCHECK(ret);
+	OCLCHECK(ret);
 
 	// Build the kernel
 	char *kpath = NULL;
@@ -437,7 +439,7 @@ int main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	}
 
-	printf("loaded kernel from %s\n", kpath);
+	log_info("Loaded kernel from %s", kpath);
 
 	char *kdir = dirname(kpath);
 	char compargs[1000];
@@ -447,19 +449,19 @@ int main(int argc, char *argv[])
 			kdir, COLORMAP_LEN, TILE_SIZE, args.clargs);
 
 	cl_program clprg = clCreateProgramWithSource(clctx, 1, (const char **)&clsrc, NULL, &ret);
-	OCCHECK(ret);
+	OCLCHECK(ret);
 	ret = clBuildProgram(clprg, 1, devid, compargs, NULL, NULL);
 	if (ret != CL_SUCCESS) {
-		printf("Kernel build failed:\n");
+		log_error_clerr("Kernel build failed, dumping compiler output", ret);
 		size_t len;
 		clGetProgramBuildInfo(clprg, *devid, CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
 		char msg[len];
 		clGetProgramBuildInfo(clprg, *devid, CL_PROGRAM_BUILD_LOG, len, msg, NULL);
-		printf("%s\n", msg);
+		fprintf(stderr, "%s\n", msg);
 		return EXIT_FAILURE;
 	}
 	cl_kernel clkrn = clCreateKernel(clprg, "generate_pixel", &ret);
-	OCCHECK(ret);
+	OCLCHECK(ret);
 
 	const cl_image_format imformat = { CL_R, CL_UNSIGNED_INT8 };
 	const cl_image_desc imdesc = {
@@ -476,17 +478,17 @@ int main(int argc, char *argv[])
 	size_t tile_len = TILE_SIZE * TILE_SIZE * sizeof(uint8_t);
 	uint8_t *tile = malloc(tile_len);
 	cl_mem tile_cl = clCreateImage(clctx, CL_MEM_WRITE_ONLY, &imformat, &imdesc, NULL, &ret);
-	OCCHECK(ret);
+	OCLCHECK(ret);
 	// Note that we allocate the upper-bound of input points, this should not be
 	// a lot of memory anyway
 	cl_float2 *chosenpts = calloc(datalen, sizeof(cl_float2));
 	cl_mem pts_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY, datalen * sizeof(cl_float2),
 								   NULL, &ret);
-	OCCHECK(ret);
+	OCLCHECK(ret);
 	float *chosenvals = calloc(datalen, sizeof(float));
 	cl_mem vals_cl = clCreateBuffer(clctx, CL_MEM_READ_ONLY, datalen * sizeof(cl_float),
 									NULL, &ret);
-	OCCHECK(ret);
+	OCLCHECK(ret);
 
 	char blankfilepath[PATH_MAX];
 	snprintf(blankfilepath, sizeof(blankfilepath), "%s/blank.png", args.outdir);
@@ -494,7 +496,7 @@ int main(int argc, char *argv[])
 	FILE *file = fopen(blankfilepath, "wb");
 	if (file == NULL) {
 		// Otherwise, just ignore that, the link() calls later are going to fail, but meh
-		perror("Failed to save the blank tile!");
+		log_error_errno("Failed to save the blank tile!");
 	} else {
 		fwrite(blank_tile_png, 1, sizeof(blank_tile_png), file);
 		fclose(file);
@@ -502,7 +504,7 @@ int main(int argc, char *argv[])
 
 	for (unsigned int tx = rect_left(tilebounds); tx <= rect_right(tilebounds); tx++) {
 		for (unsigned int ty = rect_top(tilebounds); ty <= rect_bot(tilebounds); ty++) {
-			printf("- %d x %d\n", tx, ty);
+			log_info("Processing (%d,%d)", tx, ty);
 			cl_float4 tr[2];
 			fetch_tile_transform(args.zoomlevel, tx, ty, args.outdir,
 								 args.proj_meters, tr);
@@ -531,31 +533,31 @@ int main(int argc, char *argv[])
 
 			bzero(tile, TILE_SIZE * TILE_SIZE);
 			if (npts != 0) {
-				printf("Generating %d x %d from %d\n", tx, ty, npts);
+				log_info(" generating...");
 				clEnqueueWriteBuffer(clque, pts_cl, CL_TRUE, 0, npts * sizeof(chosenpts[0]),
 									 chosenpts, 0, NULL, NULL);
 				clEnqueueWriteBuffer(clque, vals_cl, CL_TRUE, 0, npts * sizeof(chosenvals[0]),
 									 chosenvals, 0, NULL, NULL);
 
 				ret = clSetKernelArg(clkrn, 0, sizeof(tr[0]), &tr[0]);
-				OCCHECK(ret);
+				OCLCHECK(ret);
 				ret = clSetKernelArg(clkrn, 1, sizeof(tr[1]), &tr[1]);
-				OCCHECK(ret);
+				OCLCHECK(ret);
 				ret = clSetKernelArg(clkrn, 2, sizeof(npts), &npts);
-				OCCHECK(ret);
+				OCLCHECK(ret);
 				ret = clSetKernelArg(clkrn, 3, sizeof(pts_cl), &pts_cl);
-				OCCHECK(ret);
+				OCLCHECK(ret);
 				ret = clSetKernelArg(clkrn, 4, sizeof(vals_cl), &vals_cl);
-				OCCHECK(ret);
+				OCLCHECK(ret);
 				ret = clSetKernelArg(clkrn, 5, sizeof(tile_cl), &tile_cl);
-				OCCHECK(ret);
+				OCLCHECK(ret);
 
 				size_t global_work_size[] = { TILE_SIZE, TILE_SIZE };
 				size_t local_work_size[] = { 1, 1 };
 				ret = clEnqueueNDRangeKernel(clque, clkrn, 2, NULL,
 											 global_work_size, local_work_size,
 											 0, NULL, NULL);
-				OCCHECK(ret);
+				OCLCHECK(ret);
 				clFinish(clque);
 
 				// Read the image and save to a file
@@ -567,12 +569,11 @@ int main(int argc, char *argv[])
 				write_png(path, TILE_SIZE, TILE_SIZE,
 						  tile,
 						  args.colormap);
-				printf("wrote %s\n", path);
-
+				log_info(" wrote %s", path);
 			} else {
-				printf("Skipping %d x %d\n", tx, ty);
+				log_info(" skipping...");
 				link(blankfilepath, path);
-				printf("linked %s to %s\n", path, blankfilepath);
+				log_info(" linked %s to %s", path, blankfilepath);
 			}
 		}
 	}

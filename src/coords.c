@@ -5,6 +5,8 @@
 #include <gsl/gsl_matrix.h>
 #include <gsl/gsl_multifit.h>
 
+#include "log.h"
+
 #include "coords.h"
 
 static projPJ proj_wgs;
@@ -22,7 +24,7 @@ cl_float2 wgs84_to_meters(cl_float2 wgs, projPJ proj_meters)
 	double rx = wgs.y * DEG_TO_RAD;
 	int err = pj_transform(proj_wgs, proj_meters, 1, 1, &ry, &rx, NULL);
 	if (err) {
-		fprintf(stderr, "Coordinate conversion failed: %s\n", pj_strerrno(err));
+		log_error("Coordinate conversion failed: %s", pj_strerrno(err));
 	}
 	ret.x = rx;
 	ret.y = ry;
