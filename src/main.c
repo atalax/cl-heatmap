@@ -90,8 +90,8 @@ struct arguments {
 	char *jspath;
 	char *outdir;
 	char *clargs;
-	cl_float2 northwest;
-	cl_float2 southeast;
+	struct rect bounds;
+	bool bounds_defined;
 	rgba_t *colormap;
 	projPJ proj_meters;
 	float prefilter;
@@ -135,10 +135,9 @@ static void parse_opt_boundaries(char *arg, struct argp_state *state)
 		}
 	}
 
-	arguments->northwest.x = flts[0];
-	arguments->northwest.y = flts[1];
-	arguments->southeast.x = flts[2];
-	arguments->southeast.y = flts[3];
+	arguments->bounds = rect_make((cl_float2){ .x = flts[0], .y = flts[1] },
+								  (cl_float2){ .x = flts[2], .y = flts[3] });
+	arguments->bounds_defined = true;
 }
 
 static long safe_parse_long(struct argp_state *state, char *name, char *arg)
@@ -272,8 +271,7 @@ int main(int argc, char *argv[])
 		.jspath = "./input.json",
 		.outdir = "./cache",
 		.clargs = "",
-		.northwest = { .x = 50.17, .y = 14.24 },
-		.southeast = { .x = 49.95, .y = 14.70 },
+		.bounds_defined = false,
 		.colormap = colormap_heat,
 		.proj_meters = NULL,
 		.prefilter = INFINITY
@@ -283,6 +281,11 @@ int main(int argc, char *argv[])
 
 	if (args.kernel == NULL) {
 		fprintf(stderr, "No kernel specified. Select on from the kernels/ directory!\n");
+		return EXIT_FAILURE;
+	}
+
+	if (!args.bounds_defined) {
+		fprintf(stderr, "No boundaries specified!\n");
 		return EXIT_FAILURE;
 	}
 
@@ -324,14 +327,14 @@ int main(int argc, char *argv[])
 		datapts[i] = wgs84_to_meters(datapts[i], args.proj_meters);
 	}
 
+	struct rect tilebounds = rect_make(
+			round_point(wgs84_to_tile(args.bounds.lt, args.zoomlevel), 1, false),
+			round_point(wgs84_to_tile(args.bounds.rb, args.zoomlevel), 1, true));
+
 	// Render tiles
-	cl_float2 tilelt = round_point(wgs84_to_tile(args.northwest, args.zoomlevel),
-								1, false);
-	cl_float2 tilerb = round_point(wgs84_to_tile(args.southeast, args.zoomlevel),
-								1, true);
 	printf("Rendering tiles from %dx%d to %dx%d on zoomlevel %d\n",
-			(int)tilelt.x, (int)tilelt.y,
-			(int)tilerb.x, (int)tilerb.y,
+			(int)rect_left(tilebounds), (int)rect_top(tilebounds),
+			(int)rect_right(tilebounds), (int)rect_bot(tilebounds),
 			args.zoomlevel);
 
 
@@ -434,8 +437,8 @@ int main(int argc, char *argv[])
 									NULL, &ret);
 	OCCHECK(ret);
 
-	for (unsigned int tx = tilelt.x; tx <= tilerb.x; tx++) {
-		for (unsigned int ty = tilelt.y; ty <= tilerb.y; ty++) {
+	for (unsigned int tx = rect_left(tilebounds); tx <= rect_right(tilebounds); tx++) {
+		for (unsigned int ty = rect_top(tilebounds); ty <= rect_bot(tilebounds); ty++) {
 			printf("- %d x %d\n", tx, ty);
 			cl_float4 tr[2];
 			fetch_tile_transform(args.zoomlevel, tx, ty, args.outdir,
