@@ -19,6 +19,7 @@
 #include <libpng16/png.h>
 #include <json-c/json.h>
 
+#include "blank.h"
 #include "colormaps.h"
 #include "coords.h"
 #include "utils.h"
@@ -487,6 +488,18 @@ int main(int argc, char *argv[])
 									NULL, &ret);
 	OCCHECK(ret);
 
+	char blankfilepath[PATH_MAX];
+	snprintf(blankfilepath, sizeof(blankfilepath), "%s/blank.png", args.outdir);
+	// We are going to be overwriting the file a few times for different zooms, solve that maybe?
+	FILE *file = fopen(blankfilepath, "wb");
+	if (file == NULL) {
+		// Otherwise, just ignore that, the link() calls later are going to fail, but meh
+		perror("Failed to save the blank tile!");
+	} else {
+		fwrite(blank_tile_png, 1, sizeof(blank_tile_png), file);
+		fclose(file);
+	}
+
 	for (unsigned int tx = rect_left(tilebounds); tx <= rect_right(tilebounds); tx++) {
 		for (unsigned int ty = rect_top(tilebounds); ty <= rect_bot(tilebounds); ty++) {
 			printf("- %d x %d\n", tx, ty);
@@ -511,6 +524,11 @@ int main(int argc, char *argv[])
 				chosenvals[npts] = datavals[i];
 				npts++;
 			}
+
+			char path[PATH_MAX];
+			snprintf(path, sizeof(path),
+					"%s/%d/%d/%d.png", args.outdir, args.zoomlevel, tx, ty);
+
 			bzero(tile, TILE_SIZE * TILE_SIZE);
 			if (npts != 0) {
 				printf("Generating %d x %d from %d\n", tx, ty, npts);
@@ -546,17 +564,16 @@ int main(int argc, char *argv[])
 								  (size_t[3]){TILE_SIZE, TILE_SIZE, 1},
 								  0, 0, tile, 0, NULL, NULL);
 
+				write_png(path, TILE_SIZE, TILE_SIZE,
+						  tile,
+						  args.colormap);
+				printf("wrote %s\n", path);
+
 			} else {
 				printf("Skipping %d x %d\n", tx, ty);
+				link(blankfilepath, path);
+				printf("linked %s to %s\n", path, blankfilepath);
 			}
-			// TODO: Not really significant optimization: write a blank png once and just copy it
-			char path[PATH_MAX];
-			snprintf(path, sizeof(path),
-					"%s/%d/%d/%d.png", args.outdir, args.zoomlevel, tx, ty);
-			write_png(path, TILE_SIZE, TILE_SIZE,
-					  tile,
-					  args.colormap);
-			printf("wrote %s\n", path);
 		}
 	}
 
