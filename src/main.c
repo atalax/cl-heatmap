@@ -533,7 +533,7 @@ int main(int argc, char *argv[])
 
 			bzero(tile, TILE_SIZE * TILE_SIZE);
 			if (npts != 0) {
-				log_info(" generating...");
+				log_info(" generating from %d...", npts);
 				clEnqueueWriteBuffer(clque, pts_cl, CL_TRUE, 0, npts * sizeof(chosenpts[0]),
 									 chosenpts, 0, NULL, NULL);
 				clEnqueueWriteBuffer(clque, vals_cl, CL_TRUE, 0, npts * sizeof(chosenvals[0]),
