@@ -403,8 +403,10 @@ int main(int argc, char *argv[])
 	}
 
 	struct rect tilebounds = rect_make(
-			round_point(wgs84_to_tile(args.bounds.lt, args.zoomlevel), 1, false),
-			round_point(wgs84_to_tile(args.bounds.rb, args.zoomlevel), 1, true));
+			wgs84_to_tile(args.bounds.lt, args.zoomlevel),
+			wgs84_to_tile(args.bounds.rb, args.zoomlevel));
+	tilebounds.lt = round_point(tilebounds.lt, 1, false);
+	tilebounds.rb = round_point(tilebounds.rb, 1, true);
 
 	// Render tiles
 	log_info("Rendering tiles from (%d,%d) to (%d,%d) on zoomlevel %d",
