@@ -119,6 +119,50 @@ static inline struct rect rect_inflate(struct rect rect, float by)
 	};
 }
 
+static inline cl_float2 rect_lefttop(struct rect rect)
+{
+	return rect.lt;
+}
+
+static inline cl_float2 rect_righttop(struct rect rect)
+{
+	return (cl_float2){
+		.x = rect.rb.x,
+		.y = rect.lt.y,
+	};
+}
+
+static inline cl_float2 rect_rightbot(struct rect rect)
+{
+	return rect.rb;
+}
+
+static inline cl_float2 rect_leftbot(struct rect rect)
+{
+	return (cl_float2){
+		.x = rect.lt.x,
+		.y = rect.rb.y,
+	};
+}
+
+static inline struct rect rect_max(cl_float2 *pts, size_t npts)
+{
+	cl_float2 lt = { .x = INFINITY, .y = INFINITY };
+	cl_float2 rb = { .x = -INFINITY, .y = -INFINITY };
+
+	for (size_t i = 0; i < npts; i++) {
+		lt.x = min(pts[i].x, lt.x);
+		lt.y = min(pts[i].y, lt.y);
+		rb.x = max(pts[i].x, rb.x);
+		rb.y = max(pts[i].y, rb.y);
+	}
+
+	return (struct rect){
+		.lt = lt,
+		.rb = rb,
+	};
+}
+
 void init_projs();
 cl_float2 wgs84_to_meters(cl_float2 wgs, projPJ proj_meters);
 void generate_translation_tile(int xtile, int ytile, int zoom, cl_float4 *out, projPJ proj_meters);

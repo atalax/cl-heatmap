@@ -538,10 +538,23 @@ int main(int argc, char *argv[])
 			// any difference for the tile values
 			struct rect tilet = rect_make((cl_float2){ .x = tx	  , .y = ty	   },
 										  (cl_float2){ .x = tx + 1, .y = ty + 1});
-
-			struct rect tilems = rect_make(tile_to_meters(tilet.lt, args.zoomlevel, args.proj_meters),
-										   tile_to_meters(tilet.rb, args.zoomlevel, args.proj_meters));
+			// Okay, so we can't just transform the left-top and right-bottom corners
+			// here and call it a day as the tile->meters coordinate transformation
+			// would need to have axis in the same direction.
+			// As we don't care about some extra points being included, we
+			// just take the maximum boundary.
+			cl_float2 ptstile[4] = {
+				rect_lefttop(tilet), rect_righttop(tilet),
+				rect_rightbot(tilet), rect_leftbot(tilet),
+			};
+			cl_float2 ptsms[4];
+			for (size_t i = 0; i < ARRAY_SIZE(ptsms); i++) {
+				ptsms[i] = tile_to_meters(ptstile[i], args.zoomlevel,
+										  args.proj_meters);
+			}
+			struct rect tilems = rect_max(ptsms, ARRAY_SIZE(ptsms));
 			tilems = rect_inflate(tilems, args.prefilter);
+
 			cl_uint npts = 0;
 			for (size_t i = 0; i < datalen; i++) {
 				if (!rect_is_inside(tilems, datapts[i])) {
