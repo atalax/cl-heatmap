@@ -11,7 +11,7 @@ leaflet = window.L
 class Map:
 
     def __init__(self):
-        self.lmap = leaflet.map("map").setView([50.035, 15.776], 14)
+        self.lmap = leaflet.map("map").setView([50.08, 14.43], 12)
 
         firstbase = None
         baselaydesc = {}
